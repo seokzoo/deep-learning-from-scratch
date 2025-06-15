@@ -14,7 +14,7 @@ class RMSNorm(torch.nn.Module):
         return norm * x * self.scale
 
 class VisionTransformer(torch.nn.Module):
-    def __init__(self, embed=True, num_layers=2, num_heads=3, patch_length=4, context_length=7, input_dim=128, latent_dim=128, output_dim=128, base=400.):
+    def __init__(self, embed=True, num_layers=2, num_heads=3, patch_length=4, context_length=7, input_dim=128, latent_dim=128, output_dim=128, base=1000.):
         super().__init__()
         self.embed = embed
         self.num_layers = num_layers
@@ -31,7 +31,7 @@ class VisionTransformer(torch.nn.Module):
         return x
 
 class TransformerBlock(torch.nn.Module):
-    def __init__(self, num_heads=3, context_length=7, input_dim=128, latent_dim=128, output_dim=128, base=400.):
+    def __init__(self, num_heads=3, context_length=7, input_dim=128, latent_dim=128, output_dim=128, base=1000.):
         super().__init__()
         self.num_heads = num_heads
         self.context_length = context_length
@@ -49,7 +49,7 @@ class TransformerBlock(torch.nn.Module):
             torch.nn.Linear(latent_dim, output_dim)
         )
 
-    def get_2d_rotary_matrix(self, base=400.):
+    def get_2d_rotary_matrix(self, base=1000.):
         half_latent_dim = self.latent_dim // 2
         quarter_latent_dim = self.latent_dim // 4
         rotary_mat = torch.zeros(self.context_length, self.context_length, self.latent_dim, self.latent_dim)
@@ -110,7 +110,7 @@ class JEPA(torch.nn.Module):
                 input_dim=config['latent_dim'],
                 latent_dim=config['latent_dim'],
                 output_dim=config['latent_dim'],
-                base=400.
+                base=1000.
                 )
         self.target_encoder = VisionTransformer(
                 embed=True,
@@ -121,7 +121,7 @@ class JEPA(torch.nn.Module):
                 input_dim=config['latent_dim'],
                 latent_dim=config['latent_dim'],
                 output_dim=config['latent_dim'],
-                base=400.
+                base=1000.
                 )
         self.target_encoder.load_state_dict(self.context_encoder.state_dict())
         self.target_encoder.eval()
@@ -135,7 +135,7 @@ class JEPA(torch.nn.Module):
                 input_dim=config['latent_dim'],
                 latent_dim=config['latent_dim'],
                 output_dim=config['latent_dim'],
-                base=400.
+                base=1000.
                 )
         self.mask_token = torch.nn.Parameter(torch.empty(config['latent_dim']))
         torch.nn.init.normal_(self.mask_token, std=0.2)
@@ -144,8 +144,12 @@ class JEPA(torch.nn.Module):
         pass
 
 def main(config):
-    training_data = torchvision.datasets.MNIST(root="data", train=True, download=True, transform=torchvision.transforms.ToTensor())
-    test_data = torchvision.datasets.MNIST(root="data", train=False, download=True, transform=torchvision.transforms.ToTensor())
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.Grayscale(num_output_channels=1),
+        torchvision.transforms.ToTensor()
+    ])
+    training_data = torchvision.datasets.CIFAR100(root="data", train=True, download=True, transform=transform)
+    test_data = torchvision.datasets.CIFAR100(root="data", train=False, download=True, transform=transform)
     train_dataloader = torch.utils.data.DataLoader(training_data, batch_size=config['train_batch_size'], shuffle=True)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=config['test_batch_size'], shuffle=True)
 
@@ -270,6 +274,9 @@ def main(config):
 
         plt.plot(train_steps, train_losses, label='Train Loss', color='blue', marker='o')
         plt.plot(test_steps, test_losses, label='Test Loss', color='red', marker='s')
+        plt.yscale('log')
+        plt.legend()
+        plt.grid(True, which='both', ls='--', alpha=.3)
         plt.show()
 
 
@@ -313,11 +320,11 @@ if __name__ == "__main__":
             "learning_rate": 1e-4,
             "train_batch_size": 64,
             "test_batch_size": 64,
-            "ema_alpha": 0.99,
+            "ema_alpha": 0.994,
             "num_targets": 3,
             "num_vit_layers": 2,
             "num_vit_heads": 3,
-            "img_size": 28,
+            "img_size": 32,
             "patch_length": 4,
             "latent_dim": 128
     }

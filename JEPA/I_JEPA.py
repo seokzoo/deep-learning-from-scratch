@@ -303,15 +303,23 @@ def main(config):
         predicted = jepa.predictor(merged_patches, merged_indices)
         y_hat = predicted[:,:len(targets),:]
 
+        invisible = np.setdiff1d(np.arange(64), context.numpy())
+        cloned = patches.clone() 
+        cloned[:,invisible,:] = 0
+        folded = torch.nn.functional.fold(cloned.transpose(-1,-2), kernel_size=config['patch_length'], stride=config['patch_length'], output_size=(32, 32)).squeeze()
+
         _, ax = plt.subplots(6, 4)
         for i in range(6):
             ax[i, 0].imshow(imgs[i].squeeze())
-            ax[i, 1].imshow(y[i].detach().numpy().squeeze())
-            ax[i, 2].imshow(y_hat[i].detach().numpy().squeeze())
-            ax[i, 3].imshow(predicted[i].detach().numpy().squeeze())
+            ax[i, 1].imshow(folded[i].squeeze())
+            ax[i, 2].imshow(y[i].detach().numpy().squeeze())
+            ax[i, 3].imshow(y_hat[i].detach().numpy().squeeze())
+        column_titles = ['original image', 'visible area', 'target patches', 'predicted patches']
+        for a, col in zip(ax[0], column_titles):
+            a.set_title(col, fontsize=14, pad=20)
         plt.show()
 
-    train()
+    #train()
     test()
 
 if __name__ == "__main__":

@@ -103,7 +103,7 @@ class JEPA(torch.nn.Module):
         self.context_length = config['img_size'] // config['patch_length']
         self.context_encoder = VisionTransformer(
                 embed=True,
-                num_layers=config['num_vit_layers'],
+                num_layers=config['num_encoder_layers'],
                 num_heads=config['num_vit_heads'],
                 patch_length=config['patch_length'],
                 context_length=self.context_length,
@@ -114,7 +114,7 @@ class JEPA(torch.nn.Module):
                 )
         self.target_encoder = VisionTransformer(
                 embed=True,
-                num_layers=config['num_vit_layers'],
+                num_layers=config['num_encoder_layers'],
                 num_heads=config['num_vit_heads'],
                 patch_length=config['patch_length'],
                 context_length=self.context_length,
@@ -128,7 +128,7 @@ class JEPA(torch.nn.Module):
         self.target_encoder.requires_grad_(requires_grad=False)
         self.predictor = VisionTransformer(
                 embed=False,
-                num_layers=config['num_vit_layers'],
+                num_layers=config['num_predictor_layers'],
                 num_heads=config['num_vit_heads'],
                 patch_length=config['patch_length'],
                 context_length=self.context_length,
@@ -148,9 +148,10 @@ def main(config):
         torchvision.transforms.Grayscale(num_output_channels=1),
         torchvision.transforms.ToTensor()
     ])
-    training_data = torchvision.datasets.CIFAR100(root="data", train=True, download=True, transform=transform)
-    test_data = torchvision.datasets.CIFAR100(root="data", train=False, download=True, transform=transform)
-    train_dataloader = torch.utils.data.DataLoader(training_data, batch_size=config['train_batch_size'], shuffle=True)
+    # test data is larger than train data. so I swap them.
+    test_data = torchvision.datasets.STL10(root="data", split='train', download=False, transform=transform)
+    train_data = torchvision.datasets.STL10(root="data", split='test', download=False, transform=transform)
+    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=config['train_batch_size'], shuffle=True)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=config['test_batch_size'], shuffle=True)
 
     def get_targets(num_targets, context_length):
@@ -303,23 +304,25 @@ def main(config):
         predicted = jepa.predictor(merged_patches, merged_indices)
         y_hat = predicted[:,:len(targets),:]
 
-        invisible = np.setdiff1d(np.arange(64), context.numpy())
+        all_indices = np.arange((config['img_size'] // config['patch_length']) ** 2)
+        invisible = np.setdiff1d(all_indices, context.numpy())
         cloned = patches.clone() 
         cloned[:,invisible,:] = 0
-        folded = torch.nn.functional.fold(cloned.transpose(-1,-2), kernel_size=config['patch_length'], stride=config['patch_length'], output_size=(32, 32)).squeeze()
+        folded = torch.nn.functional.fold(cloned.transpose(-1,-2), kernel_size=config['patch_length'], stride=config['patch_length'], output_size=(config['img_size'], config['img_size'])).squeeze()
 
-        _, ax = plt.subplots(6, 4)
+        _, ax = plt.subplots(6, 5, figsize=(14, 10))
         for i in range(6):
             ax[i, 0].imshow(imgs[i].squeeze())
             ax[i, 1].imshow(folded[i].squeeze())
             ax[i, 2].imshow(y[i].detach().numpy().squeeze())
             ax[i, 3].imshow(y_hat[i].detach().numpy().squeeze())
-        column_titles = ['original image', 'visible area', 'target patches', 'predicted patches']
+            ax[i, 4].imshow(np.abs(y[i].detach().numpy().squeeze() - y_hat[i].detach().numpy().squeeze()), cmap='hot')
+        column_titles = ['original image', 'visible area', 'target patches', 'predicted patches', 'Absolute Error']
         for a, col in zip(ax[0], column_titles):
             a.set_title(col, fontsize=14, pad=20)
         plt.show()
 
-    #train()
+    train()
     test()
 
 if __name__ == "__main__":
@@ -330,9 +333,10 @@ if __name__ == "__main__":
             "test_batch_size": 64,
             "ema_alpha": 0.994,
             "num_targets": 3,
-            "num_vit_layers": 2,
+            "num_encoder_layers": 3,
+            "num_predictor_layers": 2,
             "num_vit_heads": 3,
-            "img_size": 32,
+            "img_size": 96,
             "patch_length": 4,
             "latent_dim": 128
     }

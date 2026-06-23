@@ -33,13 +33,13 @@ class conv_block(torch.nn.Module):
         return x
 
 def positional_encoding(ts, embedding_size):
-    i = torch.arange(embedding_size)
+    i = torch.arange(embedding_size, device=ts.device)
     div = 10000.0 ** (i / embedding_size)
 
-    vs = torch.zeros(ts.shape[0], embedding_size)
+    vs = torch.zeros(ts.shape[0], embedding_size, device=ts.device)
 
     for i, t in enumerate(ts):
-        v = torch.zeros(embedding_size)
+        v = torch.zeros(embedding_size, device=ts.device)
         v[0::2] = torch.sin(t/div[0::2] )
         v[1::2] = torch.cos(t/div[1::2] )
         vs[i] = v

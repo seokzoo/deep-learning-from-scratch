@@ -3,6 +3,8 @@ import torchvision
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+device = torch.device("mps" if torch.mps.is_available() else "cpu")
+
 class conv_block(torch.nn.Module):
     def __init__(self, in_channels, out_channels, time_embedding_size=100):
         super().__init__()
@@ -33,16 +35,17 @@ class conv_block(torch.nn.Module):
         return x
 
 def positional_encoding(ts, embedding_size):
-    i = torch.arange(embedding_size)
+    device = ts.device
+    i = torch.arange(embedding_size, device=device)
     div = 10000.0 ** (i / embedding_size)
 
-    vs = torch.zeros(ts.shape[0], embedding_size)
+    vs = torch.zeros(ts.shape[0], embedding_size, device=device)
 
-    for i, t in enumerate(ts):
-        v = torch.zeros(embedding_size)
+    for idx, t in enumerate(ts):
+        v = torch.zeros(embedding_size, device=device)
         v[0::2] = torch.sin(t/div[0::2] )
         v[1::2] = torch.cos(t/div[1::2] )
-        vs[i] = v
+        vs[idx] = v
 
     return vs
 
@@ -95,8 +98,8 @@ class Diffusion(torch.nn.Module):
         self.T = T
         beta_schedule = torch.linspace(beta_start, beta_end, T)
         alpha_schedule = 1 - beta_schedule
-        self.alpha_schedule = alpha_schedule.view(-1, 1, 1, 1)
-        self.bar_alpha_schedule = torch.cumprod(alpha_schedule, 0).view(-1, 1, 1, 1)
+        self.register_buffer('alpha_schedule', alpha_schedule.view(-1, 1, 1, 1))
+        self.register_buffer('bar_alpha_schedule', torch.cumprod(alpha_schedule, 0).view(-1, 1, 1, 1))
         self.model = UNet(1)
         self.gamma = 3
 
@@ -122,9 +125,9 @@ if __name__ == '__main__':
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True)
     #img = tensor_to_images(dataset[0][0]) # 1, 28, 28
 
-    diffusion = Diffusion()
+    diffusion = Diffusion().to(device)
 
-    training = True
+    training = False
     sample = True
 
     if training == True:
@@ -135,7 +138,9 @@ if __name__ == '__main__':
             sum_of_loss = 0
             cnt = 0
             for x, y in tqdm(dataloader):
-                t = torch.randint(1, diffusion.T+1, (x.shape[0],))
+                x = x.to(device)
+                y = y.to(device)
+                t = torch.randint(1, diffusion.T+1, (x.shape[0],), device=device)
                 optimizer.zero_grad()
                 eps = torch.randn_like(x)
                 xt = torch.sqrt(diffusion.bar_alpha_schedule[t-1])*x + torch.sqrt(1-diffusion.bar_alpha_schedule[t-1])*eps
@@ -154,16 +159,20 @@ if __name__ == '__main__':
         torch.save(diffusion.state_dict(), 'diffusion_model.pth')
 
     if sample == True:
-        diffusion.load_state_dict(torch.load('diffusion_model.pth'))
+        diffusion.load_state_dict(torch.load('diffusion_model.pth', map_location=device))
+        diffusion.to(device)
         diffusion.eval()
         size = dataset[0][0].shape[1]
-        xt = torch.randn((20, 1, size, size))
-        y = torch.arange(0, 10).repeat(2)
+        xt = torch.randn((20, 1, size, size), device=device)
+        y = torch.arange(0, 10, device=device).repeat(2)
+        T = diffusion.T // 2
         with torch.no_grad():
-            for t in tqdm(range(diffusion.T)):
-                t = diffusion.T - t
-                cond_hat_eps, cond_hat_mu = diffusion(xt, (torch.ones((20))*t).int(), y)
-                uncond_hat_eps, uncond_hat_mu = diffusion(xt, (torch.ones((20))*t).int(), None)
+            for t in tqdm(range(T)):
+                t = T - t
+                t_tensor = torch.full((20,), t, device=device, dtype=torch.int)
+
+                cond_hat_eps, cond_hat_mu = diffusion(xt, t_tensor, y)
+                uncond_hat_eps, uncond_hat_mu = diffusion(xt, t_tensor, None)
                 cond_hat_score = -cond_hat_eps / torch.sqrt(1-diffusion.bar_alpha_schedule[t-1])
                 uncond_hat_score = -uncond_hat_eps / torch.sqrt(1-diffusion.bar_alpha_schedule[t-1])
                 cond_score = diffusion.gamma * (cond_hat_score - uncond_hat_score) + uncond_hat_score
@@ -179,4 +188,4 @@ if __name__ == '__main__':
                     xt = cond_mu + torch.sqrt(q_variance)*eps
 
         grid = torchvision.utils.make_grid(xt.reshape(-1, 1, 28, 28), nrow=4)
-        torchvision.utils.save_image(grid, 'images.png')
+        torchvision.utils.save_image(grid, 'images_fp32.png')
